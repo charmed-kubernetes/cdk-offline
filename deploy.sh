@@ -50,6 +50,8 @@ clean "aws ec2 terminate-instances --instance-ids $SQUID_INSTANCE_ID"
 until aws ec2 describe-instances --instance-ids $SQUID_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep running; do sleep 1; echo 'waiting for squid instance'; done
 aws ec2 modify-instance-attribute --instance-id $SQUID_INSTANCE_ID --source-dest-check '{"Value": false}'
 
+SQUID_INSTANCE_IP=$(aws ec2 describe-instances --instance-ids $SQUID_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].PublicIpAddress')
+
 SQUID_ROUTE_TABLE_ID=$(aws ec2 create-route-table --vpc-id $VPC_ID --output json| jq -r '.RouteTable.RouteTableId')
 aws ec2 create-route --route-table-id $SQUID_ROUTE_TABLE_ID --destination-cidr-block 0.0.0.0/0 --instance-id $SQUID_INSTANCE_ID
 clean "aws ec2 delete-route-table --route-table-id $SQUID_ROUTE_TABLE_ID"
@@ -59,6 +61,15 @@ SQUID_ROUTE_TABLE_ASSOCIATION_ID=$(aws ec2 associate-route-table --route-table-i
 TEST_INSTANCE_ID=$(aws ec2 run-instances --output json --count 1 --image-id ami-bb1901d8 --instance-type t2.micro --key-name cdk-offline --subnet-id $PRIVATE_SUBNET_ID | jq -r '.Instances[].InstanceId')
 clean "until aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep terminated; do sleep 1; echo 'wating for instance termination'; done"
 clean "aws ec2 terminate-instances --instance-ids $TEST_INSTANCE_ID"
+
+# Wait for the squid instance to respond to ssh
+until ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP echo waiting; do sleep 1; done
+
+# Install squid on the squid instance
+scp -i cdk-offline.pem ./install-squid.sh ubuntu@$SQUID_INSTANCE_IP:.
+ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP ./install-squid.sh
+
+
 
 # cat > cleanup-$VPC_ID.sh << EOF
 # set -ux
