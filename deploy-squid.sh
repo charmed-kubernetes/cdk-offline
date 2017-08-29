@@ -38,6 +38,7 @@ aws ec2 create-route --route-table-id $DEFAULT_ROUTE_TABLE_ID --destination-cidr
 
 SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --filters Name=vpc-id,Values=$VPC_ID | awk '{print $6}')
 aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol all --port 0-65536 --cidr $PRIVATE_SUBNET_CIDR
 
 if [ ! -f cdk-offline.pem ]; then
     aws ec2 create-key-pair --key-name cdk-offline > cdk-offline.pem
@@ -58,9 +59,12 @@ clean "aws ec2 delete-route-table --route-table-id $SQUID_ROUTE_TABLE_ID"
 
 SQUID_ROUTE_TABLE_ASSOCIATION_ID=$(aws ec2 associate-route-table --route-table-id $SQUID_ROUTE_TABLE_ID --subnet-id $PRIVATE_SUBNET_ID)
 
-TEST_INSTANCE_ID=$(aws ec2 run-instances --output json --count 1 --image-id ami-bb1901d8 --instance-type t2.micro --key-name cdk-offline --subnet-id $PRIVATE_SUBNET_ID | jq -r '.Instances[].InstanceId')
-clean "until aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep terminated; do sleep 1; echo 'wating for instance termination'; done"
-clean "aws ec2 terminate-instances --instance-ids $TEST_INSTANCE_ID"
+# TEST_INSTANCE_ID=$(aws ec2 run-instances --output json --count 1 --image-id ami-bb1901d8 --instance-type t2.micro --key-name cdk-offline --subnet-id $PRIVATE_SUBNET_ID | jq -r '.Instances[].InstanceId')
+# clean "until aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep terminated; do sleep 1; echo 'wating for instance termination'; done"
+# clean "aws ec2 terminate-instances --instance-ids $TEST_INSTANCE_ID"
+#
+# until aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep running; do sleep 1; echo 'waiting for squid instance'; done
+# TEST_INSTANCE_IP=$(aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].PrivateIpAddress')
 
 # Wait for the squid instance to respond to ssh
 until ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP echo waiting; do sleep 1; done
@@ -69,6 +73,10 @@ until ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP echo waiting; do sleep 1;
 scp -i cdk-offline.pem ./install-squid.sh ubuntu@$SQUID_INSTANCE_IP:.
 ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP ./install-squid.sh
 
+scp -i cdk-offline.pem cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP:.
+
+echo SQUID_INSTANCE_IP: $SQUID_INSTANCE_IP
+# echo TEST_INSTANCE_IP: $TEST_INSTANCE_IP
 
 
 # cat > cleanup-$VPC_ID.sh << EOF
