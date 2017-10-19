@@ -245,6 +245,7 @@ acl allowed_http_sites dstdomain ntp.ubuntu.com
 acl allowed_http_sites dstdomain security.ubuntu.com
 acl allowed_http_sites dstdomain ap-southeast-2.ec2.archive.ubuntu.com
 acl allowed_http_sites dstdomain ec2.ap-southeast-2.amazonaws.com
+acl allowed_http_sites dstdomain cloud-images.ubuntu.com
 #acl allowed_http_sites dstdomain [you can add other domains to permit]
 http_access allow allowed_http_sites
 
@@ -257,6 +258,7 @@ acl allowed_https_sites ssl::server_name ntp.ubuntu.com
 acl allowed_https_sites ssl::server_name security.ubuntu.com
 acl allowed_https_sites ssl::server_name ap-southeast-2.ec2.archive.ubuntu.com
 acl allowed_https_sites ssl::server_name ec2.ap-southeast-2.amazonaws.com
+acl allowed_https_sites ssl::server_name cloud-images.ubuntu.com
 #acl allowed_https_sites ssl::server_name [you can add other domains to permit]
 acl step1 at_step SslBump1
 acl step2 at_step SslBump2
