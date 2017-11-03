@@ -1,5 +1,10 @@
 #!/bin/bash
+
 set -eux
+
+APT_MIRROR=$1
+
+[ -z "$APT_MIRROR" ] && echo "Usage: deploy-squid.sh APT_MIRROR. Missing argument APT_MIRROR." && exit 1
 
 VPC_CIDR=172.32.0.0/16
 PRIVATE_SUBNET_CIDR=172.32.0.0/24
@@ -87,22 +92,17 @@ clean "aws ec2 delete-route-table --route-table-id $SQUID_ROUTE_TABLE_ID"
 # Associate the route with the private subnet.
 SQUID_ROUTE_TABLE_ASSOCIATION_ID=$(aws ec2 associate-route-table --route-table-id $SQUID_ROUTE_TABLE_ID --subnet-id $PRIVATE_SUBNET_ID)
 
-# TEST_INSTANCE_ID=$(aws ec2 run-instances --output json --count 1 --image-id ami-bb1901d8 --instance-type t2.micro --key-name cdk-offline --subnet-id $PRIVATE_SUBNET_ID | jq -r '.Instances[].InstanceId')
-# clean "until aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep terminated; do sleep 1; echo 'wating for instance termination'; done"
-# clean "aws ec2 terminate-instances --instance-ids $TEST_INSTANCE_ID"
-#
-# until aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].State.Name' | grep running; do sleep 1; echo 'waiting for squid instance'; done
-# TEST_INSTANCE_IP=$(aws ec2 describe-instances --instance-ids $TEST_INSTANCE_ID --output json | jq -r '.Reservations[].Instances[].PrivateIpAddress')
-
 # Wait for the squid instance to respond to ssh
 until ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP echo waiting; do sleep 1; done
 
 # Install squid on the squid instance
 scp -i cdk-offline.pem ./install-squid.sh ubuntu@$SQUID_INSTANCE_IP:.
-ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP ./install-squid.sh
+ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP ./install-squid.sh $VPC_ID $APT_MIRROR
 
 scp -i cdk-offline.pem cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP:.
 
+set +x
+echo VPC_ID                             $VPC_ID
 echo VPC_CIDR                           $VPC_CIDR
 echo PRIVATE_SUBNET_CIDR                $PRIVATE_SUBNET_CIDR
 echo PUBLIC_SUBNET_CIDR                 $PUBLIC_SUBNET_CIDR
@@ -115,37 +115,3 @@ echo SQUID_INSTANCE_ID                  $SQUID_INSTANCE_ID
 echo SQUID_INSTANCE_IP                  $SQUID_INSTANCE_IP
 echo SQUID_ROUTE_TABLE_ID               $SQUID_ROUTE_TABLE_ID
 echo SQUID_ROUTE_TABLE_ASSOCIATION_ID   $SQUID_ROUTE_TABLE_ASSOCIATION_ID
-
-# echo TEST_INSTANCE_IP: $TEST_INSTANCE_IP
-
-
-# cat > cleanup-$VPC_ID.sh << EOF
-# set -ux
-# aws ec2 detach-internet-gateway --internet-gateway-id $GATEWAY_ID --vpc-id $VPC_ID
-# aws ec2 delete-internet-gateway --internet-gateway-id $GATEWAY_ID
-# aws ec2 delete-subnet --subnet-id $PRIVATE_SUBNET_ID
-# aws ec2 delete-vpc --vpc-id $VPC_ID
-# EOF
-# chmod +x cleanup-$VPC_ID.sh
-
-
-# ACL_ID=$(aws ec2 describe-network-acls --filters Name=vpc-id,Values=$VPC_ID --output json | jq -r '.NetworkAcls[0].NetworkAclId')
-#
-# MY_IP=$(dig +short myip.opendns.com @resolver1.opendns.com)
-# aws ec2 replace-network-acl-entry --network-acl-id $ACL_ID --egress --rule-number 100 --protocol all --rule-action allow --cidr-block $MY_IP/32
-#
-# function acl_dn {
-#   RULE=$1
-#   DN=$2
-#   dig +short $DN | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | while read ip
-#     do aws ec2 create-network-acl-entry --network-acl-id $ACL_ID --egress --rule-number $RULE --protocol all --rule-action allow --cidr-block $ip/32
-#     RULE=$((RULE + 1))
-#   done
-# }
-#
-# acl_dn 200 ap-southeast-2.ec2.archive.ubuntu.com
-# acl_dn 300 security.ubuntu.com
-# acl_dn 400 juju-dist.s3.amazonaws.com
-#
-# # Bootstrap juju controller
-# juju bootstrap aws/ap-southeast-2 aws-$VPC_ID --config vpc-id=$VPC_ID --config test-mode=true

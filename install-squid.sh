@@ -2,7 +2,18 @@
 
 set -eux
 
+VPC_ID=$1
+APT_MIRROR=$2
+
+[ -z "$VPC_ID" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR. Missing argument VPC_ID." && exit 1
+[ -z "$APT_MIRROR" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR. Missing argument APT_MIRROR." && exit 1
+
+sudo apt-add-repository -y ppa:juju/stable
 sudo apt update
+sudo apt install -y juju
+
+juju add-credential aws
+
 sudo apt install -y libssl-dev build-essential openssl
 
 cd /tmp
@@ -12,7 +23,7 @@ cd squid-3.5.13
 
 sudo ./configure --prefix=/usr --exec-prefix=/usr --libexecdir=/usr/lib64/squid --sysconfdir=/etc/squid --sharedstatedir=/var/lib --localstatedir=/var --libdir=/usr/lib64 --datadir=/usr/share/squid --with-logdir=/var/log/squid --with-pidfile=/var/run/squid.pid --with-default-user=squid --disable-dependency-tracking --enable-linux-netfilter --with-openssl --without-nettle
 
-sudo make
+sudo make -j 4
 sudo make install
 
 sudo useradd -M squid
@@ -238,28 +249,30 @@ sudo cat squid.key squid.crt | sudo tee squid.pem
 sudo tee /etc/squid/squid.conf <<EOF
 visible_hostname squid
 
-#Handling HTTP requests
+# Handle redirection
+url_rewrite_program /etc/squid/url-rewrite.py
+url_rewrite_children 4
+
+# Handling HTTP requests
 http_port 3129 intercept
-acl allowed_http_sites dstdomain juju-dist.s3.amazonaws.com
-acl allowed_http_sites dstdomain ntp.ubuntu.com
+# security.ubuntu.com is only "allowed" in the sense that it will be redirected later.
 acl allowed_http_sites dstdomain security.ubuntu.com
-acl allowed_http_sites dstdomain ap-southeast-2.ec2.archive.ubuntu.com
+acl allowed_http_sites dstdomain $APT_MIRROR
 acl allowed_http_sites dstdomain ec2.ap-southeast-2.amazonaws.com
-acl allowed_http_sites dstdomain cloud-images.ubuntu.com
-#acl allowed_http_sites dstdomain [you can add other domains to permit]
+acl allowed_http_sites dstdomain gcr.io
+acl allowed_http_sites dstdomain quay.io
+acl allowed_http_sites dstdomain docker.io
 http_access allow allowed_http_sites
 
 #Handling HTTPS requests
 https_port 3130 cert=/etc/squid/ssl/squid.pem ssl-bump intercept
 acl SSL_port port 443
 http_access allow SSL_port
-acl allowed_https_sites ssl::server_name juju-dist.s3.amazonaws.com
-acl allowed_https_sites ssl::server_name ntp.ubuntu.com
-acl allowed_https_sites ssl::server_name security.ubuntu.com
-acl allowed_https_sites ssl::server_name ap-southeast-2.ec2.archive.ubuntu.com
+acl allowed_https_sites ssl::server_name $APT_MIRROR
 acl allowed_https_sites ssl::server_name ec2.ap-southeast-2.amazonaws.com
-acl allowed_https_sites ssl::server_name cloud-images.ubuntu.com
-#acl allowed_https_sites ssl::server_name [you can add other domains to permit]
+acl allowed_https_sites ssl::server_name gcr.io
+acl allowed_https_sites ssl::server_name quay.io
+acl allowed_https_sites ssl::server_name docker.io
 acl step1 at_step SslBump1
 acl step2 at_step SslBump2
 acl step3 at_step SslBump3
@@ -271,8 +284,53 @@ ssl_bump terminate step2 all
 http_access deny all
 EOF
 
+sudo tee /etc/squid/url-rewrite.py <<EOF
+#!/usr/bin/env python3
+
+import sys
+
+def main():
+    req = sys.stdin.readline()
+    while req:
+        url = req.split()[0]
+        if 'security.ubuntu.com' in url:
+            new_url = url.replace('security.ubuntu.com', '$APT_MIRROR')
+            resp = 'OK status=302 url="%s"\n' % new_url
+        else:
+            resp = 'OK'
+        sys.stdout.write('%s\n' % resp)
+        sys.stdout.flush()
+        req = sys.stdin.readline()
+
+if __name__ == '__main__':
+    main()
+EOF
+
+sudo chmod +x /etc/squid/url-rewrite.py
+
 sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3129
 sudo iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3130
 
 sudo systemctl daemon-reload
 sudo systemctl restart squid
+
+cd /home/ubuntu
+
+mkdir juju-metadata
+
+juju metadata generate-image \
+	-d juju-metadata \
+	-i ami-550c3c36 \
+	-r ap-southeast-2 \
+	-u https://ec2.ap-southeast-2.amazonaws.com \
+	--virt-type hvm \
+	--storage=ssd \
+
+juju bootstrap aws/ap-southeast-2 \
+	--config vpc-id=$VPC_ID \
+	--config vpc-id-force=true \
+	--config test-mode=true \
+	--to subnet=172.32.0.0/24 \
+	--metadata-source /home/ubuntu/juju-metadata \
+	--config apt-mirror=http://$APT_MIRROR/ubuntu/ \
+	--config agent-stream=release --debug
