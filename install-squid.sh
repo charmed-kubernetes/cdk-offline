@@ -4,9 +4,13 @@ set -eux
 
 VPC_ID=$1
 APT_MIRROR=$2
+INSECURE_REGISTRY=$3
+INSECURE_REGISTRY_PORT=$4
 
-[ -z "$VPC_ID" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR. Missing argument VPC_ID." && exit 1
-[ -z "$APT_MIRROR" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR. Missing argument APT_MIRROR." && exit 1
+[ -z "$VPC_ID" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
+[ -z "$APT_MIRROR" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
+[ -z "$INSECURE_REGISTRY" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
+[ -z "$INSECURE_REGISTRY_PORT" ] && echo "Usage: install-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
 
 sudo apt-add-repository -y ppa:juju/stable
 sudo apt update
@@ -257,11 +261,9 @@ url_rewrite_children 4
 http_port 3129 intercept
 # security.ubuntu.com is only "allowed" in the sense that it will be redirected later.
 acl allowed_http_sites dstdomain security.ubuntu.com
+acl allowed_http_sites dstdomain $INSECURE_REGISTRY_IP
 acl allowed_http_sites dstdomain $APT_MIRROR
 acl allowed_http_sites dstdomain ec2.ap-southeast-2.amazonaws.com
-acl allowed_http_sites dstdomain gcr.io
-acl allowed_http_sites dstdomain quay.io
-acl allowed_http_sites dstdomain docker.io
 http_access allow allowed_http_sites
 
 #Handling HTTPS requests
@@ -270,9 +272,6 @@ acl SSL_port port 443
 http_access allow SSL_port
 acl allowed_https_sites ssl::server_name $APT_MIRROR
 acl allowed_https_sites ssl::server_name ec2.ap-southeast-2.amazonaws.com
-acl allowed_https_sites ssl::server_name gcr.io
-acl allowed_https_sites ssl::server_name quay.io
-acl allowed_https_sites ssl::server_name docker.io
 acl step1 at_step SslBump1
 acl step2 at_step SslBump2
 acl step3 at_step SslBump3
@@ -308,6 +307,7 @@ EOF
 
 sudo chmod +x /etc/squid/url-rewrite.py
 
+sudo iptables -t nat -A PREROUTING -p tcp --dport $INSECURE_REGISTRY_PORT -j REDIRECT --to-port 3129
 sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3129
 sudo iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3130
 
@@ -324,7 +324,7 @@ juju metadata generate-image \
 	-r ap-southeast-2 \
 	-u https://ec2.ap-southeast-2.amazonaws.com \
 	--virt-type hvm \
-	--storage=ssd \
+	--storage=ssd
 
 juju bootstrap aws/ap-southeast-2 \
 	--config vpc-id=$VPC_ID \

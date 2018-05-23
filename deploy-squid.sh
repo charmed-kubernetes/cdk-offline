@@ -3,8 +3,12 @@
 set -eux
 
 APT_MIRROR=$1
+INSECURE_REGISTRY=$2
+INSECURE_REGISTRY_PORT=$3
 
-[ -z "$APT_MIRROR" ] && echo "Usage: deploy-squid.sh APT_MIRROR. Missing argument APT_MIRROR." && exit 1
+[ -z "$APT_MIRROR" ] && echo "Usage: deploy-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
+[ -z "$INSECURE_REGISTRY" ] && echo "Usage: deploy-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
+[ -z "$INSECURE_REGISTRY_PORT" ] && echo "Usage: deploy-squid.sh VPC_ID APT_MIRROR INSECURE_REGISTRY INSECURE_REGISTRY PORT." && exit 1
 
 VPC_CIDR=172.32.0.0/16
 PRIVATE_SUBNET_CIDR=172.32.0.0/24
@@ -85,7 +89,7 @@ SQUID_INSTANCE_IP=$(aws ec2 describe-instances --instance-ids $SQUID_INSTANCE_ID
 # Create a route table.
 SQUID_ROUTE_TABLE_ID=$(aws ec2 create-route-table --vpc-id $VPC_ID --output json| jq -r '.RouteTable.RouteTableId')
 
-# Create a route that routs everything through the squid instance.
+# Create a route that routes everything through the squid instance.
 aws ec2 create-route --route-table-id $SQUID_ROUTE_TABLE_ID --destination-cidr-block 0.0.0.0/0 --instance-id $SQUID_INSTANCE_ID
 clean "aws ec2 delete-route-table --route-table-id $SQUID_ROUTE_TABLE_ID"
 
@@ -96,8 +100,8 @@ SQUID_ROUTE_TABLE_ASSOCIATION_ID=$(aws ec2 associate-route-table --route-table-i
 until ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP echo waiting; do sleep 1; done
 
 # Install squid on the squid instance
-scp -i cdk-offline.pem ./install-squid.sh ubuntu@$SQUID_INSTANCE_IP:.
-ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP ./install-squid.sh $VPC_ID $APT_MIRROR
+scp -i cdk-offline.pem ./deploy-squid.sh ubuntu@$SQUID_INSTANCE_IP:.
+ssh -i cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP ./deploy-squid.sh $VPC_ID $APT_MIRROR $INSECURE_REGISTRY $INSECURE_REGISTRY_PORT
 
 scp -i cdk-offline.pem cdk-offline.pem ubuntu@$SQUID_INSTANCE_IP:.
 
